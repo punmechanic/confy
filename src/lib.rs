@@ -78,7 +78,12 @@ use std::io::{ErrorKind::NotFound, Write};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-#[cfg(not(any(feature = "toml_conf", feature = "yaml_conf", feature = "ron_conf")))]
+#[cfg(not(any(
+    feature = "toml_conf",
+    feature = "yaml_conf",
+    feature = "ron_conf",
+    feature = "json_conf"
+)))]
 compile_error!(
     "Exactly one config language feature must be enabled to use \
 confy.  Please enable one of either the `toml_conf`, `yaml_conf`, \
@@ -88,11 +93,14 @@ or `ron_conf` features."
 #[cfg(any(
     all(feature = "toml_conf", feature = "yaml_conf"),
     all(feature = "toml_conf", feature = "ron_conf"),
+    all(feature = "toml_conf", feature = "json_conf"),
     all(feature = "ron_conf", feature = "yaml_conf"),
+    all(feature = "ron_conf", feature = "json_conf"),
+    all(feature = "yaml_conf", feature = "json_conf")
 ))]
 compile_error!(
     "Exactly one config language feature must be enabled to compile \
-confy.  Please disable one of either the `toml_conf`, `yaml_conf`, or `ron_conf` features. \
+confy.  Please disable one of either the `toml_conf`, `yaml_conf`, `json_conf`, or `ron_conf` features. \
 NOTE: `toml_conf` is a default feature, so disabling it might mean switching off \
 default features for confy in your Cargo.toml"
 );
@@ -105,6 +113,9 @@ const EXTENSION: &str = "yml";
 
 #[cfg(feature = "ron_conf")]
 const EXTENSION: &str = "ron";
+
+#[cfg(feature = "json_conf")]
+const EXTENSION: &str = "json";
 
 /// The errors the confy crate can encounter.
 #[derive(Debug, Error)]
@@ -120,6 +131,10 @@ pub enum ConfyError {
     #[cfg(feature = "ron_conf")]
     #[error("Bad RON data")]
     BadRonData(#[source] ron::error::SpannedError),
+
+    #[cfg(feature = "json_conf")]
+    #[error("Bad JSON data")]
+    BadJSONData(#[source] serde_json::Error),
 
     #[error("Failed to create directory")]
     DirectoryCreationFailed(#[source] std::io::Error),
@@ -141,6 +156,10 @@ pub enum ConfyError {
     #[cfg(feature = "ron_conf")]
     #[error("Failed to serialize configuration data into RON")]
     SerializeRonError(#[source] ron::error::Error),
+
+    #[cfg(feature = "json_conf")]
+    #[error("Failed to serialize configuration data into JSON")]
+    SerializeJSONError(#[source] serde_json::Error),
 
     #[error("Failed to write configuration file")]
     WriteConfigurationFileError(#[source] std::io::Error),
@@ -217,6 +236,11 @@ pub fn load_path<T: Serialize + DeserializeOwned + Default>(
             {
                 let cfg_data = ron::from_str(&cfg_string);
                 cfg_data.map_err(ConfyError::BadRonData)
+            }
+            #[cfg(feature = "json_conf")]
+            {
+                let cfg_data = serde_json::from_str(&cfg_string);
+                cfg_data.map_err(ConfyError::BadJSONData)
             }
         }
         Err(ref e) if e.kind() == NotFound => {
@@ -295,6 +319,10 @@ pub fn store_path<T: Serialize>(path: impl AsRef<Path>, cfg: T) -> Result<(), Co
     {
         let pretty_cfg = ron::ser::PrettyConfig::default();
         s = ron::ser::to_string_pretty(&cfg, pretty_cfg).map_err(ConfyError::SerializeRonError)?;
+    }
+    #[cfg(feature = "json_conf")]
+    {
+        s = serde_json::to_string(&cfg).map_err(ConfyError::SerializeJSONError)?;
     }
 
     let mut f = OpenOptions::new()
